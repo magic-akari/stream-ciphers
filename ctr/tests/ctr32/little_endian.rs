@@ -3,7 +3,7 @@
 use cipher::{
     consts::U16,
     generic_array::GenericArray,
-    stream::{NewStreamCipher, SyncStreamCipher},
+    NewCipher, StreamCipher,
 };
 use hex_literal::hex;
 

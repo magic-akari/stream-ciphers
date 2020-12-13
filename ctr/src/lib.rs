@@ -11,7 +11,7 @@
 //! # `Ctr128` Usage Example
 //!
 //! ```
-//! use ctr::cipher::stream::{NewStreamCipher, SyncStreamCipher, SyncStreamCipherSeek};
+//! use ctr::cipher::{NewCipher, StreamCipher, StreamCipherSeek};
 //!
 //! // `aes` crate provides AES block cipher implementation
 //! type Aes128Ctr = ctr::Ctr128BE<aes::Aes128>;
