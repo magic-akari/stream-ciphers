@@ -44,15 +44,16 @@
 #![warn(missing_docs, rust_2018_idioms)]
 
 pub use cipher;
+use block_buffer::BlockBuffer;
 use cipher::{
     block::{Block, BlockCipher, BlockEncrypt, ParBlocks},
     generic_array::{
         typenum::{Unsigned, U16},
         ArrayLength, GenericArray,
     },
-    stream::{
-        FromBlockCipher, LoopError, OverflowError, SeekNum, SyncStreamCipher, SyncStreamCipherSeek,
-    },
+    common::{FromBlockCipher},
+    errors::{OverflowError, LoopError},
+    stream::{SeekNum, StreamCipher, StreamCipherSeek},
 };
 use core::fmt;
 use core::ops::Div;
@@ -85,8 +86,7 @@ where
     cipher: B,
     nonce: GenericArray<F, F::Size>,
     counter: F,
-    buffer: Block<B>,
-    buf_pos: u8,
+    buffer: BlockBuffer<B::BlockSize>,
 }
 
 impl<B, F> Ctr<B, F>
@@ -98,7 +98,7 @@ where
 {
     fn check_data_len(&self, data: &[u8]) -> Result<(), LoopError> {
         let bs = B::BlockSize::USIZE;
-        let leftover_bytes = bs - self.buf_pos as usize;
+        let leftover_bytes = self.buffer.remaining();
         if data.len() < leftover_bytes {
             return Ok(());
         }
@@ -140,77 +140,45 @@ where
             buffer: Default::default(),
             nonce,
             counter: Default::default(),
-            buf_pos: 0,
         }
     }
 }
 
-impl<B, F> SyncStreamCipher for Ctr<B, F>
+impl<B, F> StreamCipher for Ctr<B, F>
 where
     B: BlockEncrypt + BlockCipher<BlockSize = U16>,
     B::ParBlocks: ArrayLength<GenericArray<u8, U16>>,
     B::BlockSize: Div<F::Size>,
     F: CtrFlavor,
 {
-    fn try_apply_keystream(&mut self, mut data: &mut [u8]) -> Result<(), LoopError> {
+    fn try_apply_keystream(&mut self, data: &mut [u8]) -> Result<(), LoopError> {
         self.check_data_len(data)?;
-        let bs = B::BlockSize::USIZE;
-        let pos = self.buf_pos as usize;
-        debug_assert!(bs > pos);
-
-        let mut counter = self.counter.clone();
-        if pos != 0 {
-            if data.len() < bs - pos {
-                let n = pos + data.len();
-                xor(data, &self.buffer[pos..n]);
-                self.buf_pos = n as u8;
-                return Ok(());
-            } else {
-                let (l, r) = data.split_at_mut(bs - pos);
-                data = r;
-                xor(l, &self.buffer[pos..]);
-                counter.increment();
-            }
-        }
-
-        // Process blocks in parallel if cipher supports it
-        let pb = B::ParBlocks::USIZE;
-        if pb != 1 {
-            let mut chunks = data.chunks_exact_mut(bs * pb);
-            let mut blocks: ParBlocks<B> = Default::default();
-            for chunk in &mut chunks {
-                for b in blocks.iter_mut() {
-                    *b = counter.generate_block(&self.nonce);
-                    counter.increment();
+        let Self { buffer, cipher, nonce, counter } = self;
+        buffer.par_xor_data(
+            data,
+            counter,
+            |ctr| {
+                let mut t: Block<B> = ctr.generate_block(&nonce);
+                ctr.increment();
+                cipher.encrypt_block(&mut t);
+                t
+            },
+            |ctr| {
+                let mut blocks: ParBlocks<B> = Default::default();
+                for block in blocks.iter_mut() {
+                    *block = ctr.generate_block(&nonce);
+                    ctr.increment();
                 }
-
-                self.cipher.encrypt_par_blocks(&mut blocks);
-                xor(chunk, to_slice::<B>(&blocks));
+                cipher.encrypt_par_blocks(&mut blocks);
+                blocks
             }
-            data = chunks.into_remainder();
-        }
+        );
 
-        let mut chunks = data.chunks_exact_mut(bs);
-        for chunk in &mut chunks {
-            let mut block = counter.generate_block(&self.nonce);
-            counter.increment();
-            self.cipher.encrypt_block(&mut block);
-            xor(chunk, &block);
-        }
-
-        let rem = chunks.into_remainder();
-        if !rem.is_empty() {
-            self.buffer = counter.generate_block(&self.nonce);
-            self.cipher.encrypt_block(&mut self.buffer);
-            xor(rem, &self.buffer[..rem.len()]);
-        }
-        self.buf_pos = rem.len() as u8;
-        self.counter = counter;
         Ok(())
     }
 }
 
-impl<B, F> SyncStreamCipherSeek for Ctr<B, F>
+impl<B, F> StreamCipherSeek for Ctr<B, F>
 where
     B: BlockEncrypt + BlockCipher<BlockSize = U16>,
     B::ParBlocks: ArrayLength<GenericArray<u8, U16>>,
@@ -218,17 +186,21 @@ where
     F: CtrFlavor,
 {
     fn try_current_pos<T: SeekNum>(&self) -> Result<T, OverflowError> {
-        T::from_block_byte(self.counter.to_backend(), self.buf_pos, B::BlockSize::U8)
+        let pos = self.buffer.get_pos() as u8;
+        T::from_block_byte(self.counter.to_backend(), pos, B::BlockSize::U8)
     }
 
     fn try_seek<S: SeekNum>(&mut self, pos: S) -> Result<(), LoopError> {
-        let res: (F::Backend, u8) = pos.to_block_byte(B::BlockSize::U8)?;
-        self.counter = F::from_backend(res.0);
-        self.buf_pos = res.1;
-        if self.buf_pos != 0 {
+        let (ctr, pos) = pos.to_block_byte(B::BlockSize::U8)?;
+        self.counter = F::from_backend(ctr);
+        if pos != 0 {
             let mut block = self.counter.generate_block(&self.nonce);
+            self.counter.increment();
             self.cipher.encrypt_block(&mut block);
-            self.buffer = block;
+            self.buffer.set(block, pos as usize);
+        } else {
+            // `reset` sets cursor to 0 without updating the underlying buffer
+            self.buffer.reset();
         }
         Ok(())
     }
@@ -244,18 +216,4 @@ where
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         write!(f, "Ctr-{:?}-{:?}", self.counter, self.cipher)
     }
-}
-
-#[inline(always)]
-fn xor(buf: &mut [u8], key: &[u8]) {
-    debug_assert_eq!(buf.len(), key.len());
-    for (a, b) in buf.iter_mut().zip(key) {
-        *a ^= *b;
-    }
-}
-
-#[inline(always)]
-fn to_slice<C: BlockEncrypt>(blocks: &ParBlocks<C>) -> &[u8] {
-    let blocks_len = C::BlockSize::to_usize() * C::ParBlocks::to_usize();
-    unsafe { core::slice::from_raw_parts(blocks.as_ptr() as *const u8, blocks_len) }
 }

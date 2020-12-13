@@ -12,9 +12,10 @@ readme = "README.md"
 edition = "2018"
 
 [dependencies]
-cipher = "=0.3.0-pre"
+cipher = { git = "https://github.com/RustCrypto/traits", branch="cipher/v03_changes" }
+block-buffer = { git = "https://github.com/RustCrypto/utils", branch="block_utils" }
 
 [dev-dependencies]
-aes = "=0.7.0-pre"
-cipher = { version = "=0.3.0-pre", features = ["dev"] }
+aes = { git = "https://github.com/RustCrypto/block-ciphers", branch="cipher_v0.3" }
+cipher = { git = "https://github.com/RustCrypto/traits", branch="cipher/v03_changes", features = ["dev"] }
 hex-literal = "0.2"
