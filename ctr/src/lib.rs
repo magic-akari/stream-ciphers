@@ -43,17 +43,16 @@
 )]
 #![warn(missing_docs, rust_2018_idioms)]
 
-pub use cipher;
 use block_buffer::BlockBuffer;
+pub use cipher;
 use cipher::{
-    block::{Block, BlockCipher, BlockEncrypt, ParBlocks},
+    errors::{LoopError, OverflowError},
     generic_array::{
         typenum::{Unsigned, U16},
         ArrayLength, GenericArray,
     },
-    common::{FromBlockCipher},
-    errors::{OverflowError, LoopError},
-    stream::{SeekNum, StreamCipher, StreamCipherSeek},
+    Block, BlockCipher, BlockEncrypt, FromBlockCipher, ParBlocks, SeekNum, StreamCipher,
+    StreamCipherSeek,
 };
 use core::fmt;
 use core::ops::Div;
@@ -153,7 +152,12 @@ where
 {
     fn try_apply_keystream(&mut self, data: &mut [u8]) -> Result<(), LoopError> {
         self.check_data_len(data)?;
-        let Self { buffer, cipher, nonce, counter } = self;
+        let Self {
+            buffer,
+            cipher,
+            nonce,
+            counter,
+        } = self;
         buffer.par_xor_data(
             data,
             counter,
@@ -171,7 +175,7 @@ where
                 }
                 cipher.encrypt_par_blocks(&mut blocks);
                 blocks
-            }
+            },
         );
 
         Ok(())
