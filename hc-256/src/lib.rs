@@ -4,7 +4,7 @@
 #![doc(
     html_logo_url = "https://raw.githubusercontent.com/RustCrypto/media/8f1a9894/logo.svg",
     html_favicon_url = "https://raw.githubusercontent.com/RustCrypto/media/8f1a9894/logo.svg",
-    html_root_url = "https://docs.rs/hc-256/0.4.1"
+    html_root_url = "https://docs.rs/hc-256/0.5.0"
 )]
 #![forbid(unsafe_code)]
 #![warn(missing_docs, rust_2018_idioms)]
@@ -12,12 +12,14 @@
 pub use cipher;
 
 use cipher::{
-    consts::U32, errors::LoopError, generic_array::GenericArray, NewCipher, StreamCipher,
+    consts::{U32, U4},
+    inout::InOutBuf,
+    Block, BlockUser, Iv, IvUser, Key, KeyIvInit, KeyUser, StreamCipherCore,
+    StreamCipherCoreWrapper,
 };
+use core::slice::from_ref;
 
-#[cfg(cargo_feature = "zeroize")]
-use std::ops::Drop;
-#[cfg(cargo_feature = "zeroize")]
+#[cfg(feature = "zeroize")]
 use zeroize::Zeroize;
 
 const TABLE_SIZE: usize = 1024;
@@ -28,47 +30,43 @@ const KEY_WORDS: usize = KEY_BITS / 32;
 const IV_BITS: usize = 256;
 const IV_WORDS: usize = IV_BITS / 32;
 
-/// The HC-256 stream cipher
-pub struct Hc256 {
+/// The HC-256 stream cipher core
+pub type Hc256 = StreamCipherCoreWrapper<Hc256Core>;
+
+/// The HC-256 stream cipher core
+pub struct Hc256Core {
     ptable: [u32; TABLE_SIZE],
     qtable: [u32; TABLE_SIZE],
-    word: u32,
     idx: u32,
-    offset: u8,
 }
 
-impl NewCipher for Hc256 {
-    /// Key size in bytes
+impl BlockUser for Hc256Core {
+    type BlockSize = U4;
+}
+
+impl KeyUser for Hc256Core {
     type KeySize = U32;
-    /// Nonce size in bytes
-    type NonceSize = U32;
-
-    fn new(key: &GenericArray<u8, Self::KeySize>, iv: &GenericArray<u8, Self::NonceSize>) -> Self {
-        let mut out = Hc256::create();
-        out.init(key.as_slice(), iv.as_slice());
-        out
-    }
 }
 
-impl StreamCipher for Hc256 {
-    fn try_apply_keystream(&mut self, data: &mut [u8]) -> Result<(), LoopError> {
-        self.process(data);
-        Ok(())
-    }
+impl IvUser for Hc256Core {
+    type IvSize = U32;
 }
 
-impl Hc256 {
-    fn create() -> Hc256 {
-        Hc256 {
+impl KeyIvInit for Hc256Core {
+    fn new(key: &Key<Self>, iv: &Iv<Self>) -> Self {
+        fn f1(x: u32) -> u32 {
+            x.rotate_right(7) ^ x.rotate_right(18) ^ (x >> 3)
+        }
+
+        fn f2(x: u32) -> u32 {
+            x.rotate_right(17) ^ x.rotate_right(19) ^ (x >> 10)
+        }
+
+        let mut out = Self {
             ptable: [0; TABLE_SIZE],
             qtable: [0; TABLE_SIZE],
-            word: 0,
             idx: 0,
-            offset: 0,
-        }
-    }
-
-    fn init(&mut self, key: &[u8], iv: &[u8]) {
+        };
         let mut data = [0; INIT_SIZE];
 
         for i in 0..KEY_WORDS {
@@ -93,25 +91,42 @@ impl Hc256 {
                 .wrapping_add(i as u32);
         }
 
-        self.ptable[..TABLE_SIZE].clone_from_slice(&data[512..(TABLE_SIZE + 512)]);
-        self.qtable[..TABLE_SIZE].clone_from_slice(&data[1536..(TABLE_SIZE + 1536)]);
+        out.ptable[..TABLE_SIZE].clone_from_slice(&data[512..(TABLE_SIZE + 512)]);
+        out.qtable[..TABLE_SIZE].clone_from_slice(&data[1536..(TABLE_SIZE + 1536)]);
 
-        self.idx = 0;
-
-        #[cfg(cargo_feature = "zeroize")]
-        data.zeroize();
+        out.idx = 0;
 
         for _ in 0..4096 {
-            self.gen_word();
+            out.gen_word();
         }
 
-        // This forces generation of the first block
-        #[cfg(cargo_feature = "zeroize")]
-        self.word.zeroize();
+        out
+    }
+}
 
-        self.offset = 4;
+impl StreamCipherCore for Hc256Core {
+    fn remaining_blocks(&self) -> Option<usize> {
+        None
     }
 
+    fn apply_keystream_blocks(
+        &mut self,
+        blocks: InOutBuf<'_, Block<Self>>,
+        mut pre_fn: impl FnMut(&[Block<Self>]),
+        mut post_fn: impl FnMut(&[Block<Self>]),
+    ) {
+        for mut block in blocks {
+            pre_fn(from_ref(block.reborrow().get_in()));
+            block
+                .reborrow()
+                .into_buf()
+                .xor(&self.gen_word().to_le_bytes());
+            post_fn(from_ref(block.reborrow().get_out()));
+        }
+    }
+}
+
+impl Hc256Core {
     #[inline]
     fn g1(&self, x: u32, y: u32) -> u32 {
         (x.rotate_right(10) ^ y.rotate_right(23))
@@ -144,7 +159,6 @@ impl Hc256 {
         let i = self.idx as usize;
         let j = self.idx as usize & TABLE_MASK;
 
-        self.offset = 0;
         self.idx = (self.idx + 1) & (2048 - 1);
 
         if i < 1024 {
@@ -167,72 +181,20 @@ impl Hc256 {
             self.h2(self.qtable[j.wrapping_sub(12) & TABLE_MASK]) ^ self.qtable[j]
         }
     }
-
-    fn process(&mut self, data: &mut [u8]) {
-        let mut i = 0;
-        let mut word: u32 = self.word;
-
-        // First, use the remaining part of the current word.
-        for j in self.offset..4 {
-            data[i] ^= ((word >> (j * 8)) & 0xff) as u8;
-            i += 1;
-        }
-
-        let mainlen = (data.len() - i) / 4;
-        let leftover = (data.len() - i) % 4;
-
-        // Process all the whole words
-        for _ in 0..mainlen {
-            word = self.gen_word();
-
-            for j in 0..4 {
-                data[i] ^= ((word >> (j * 8)) & 0xff) as u8;
-                i += 1;
-            }
-        }
-
-        // Process the end of the block
-        if leftover != 0 {
-            word = self.gen_word();
-
-            for j in 0..leftover {
-                data[i] ^= ((word >> (j * 8)) & 0xff) as u8;
-                i += 1;
-            }
-
-            self.offset = leftover as u8;
-        } else {
-            self.offset = 4;
-        }
-
-        self.word = word;
-    }
 }
 
-#[cfg(cargo_feature = "zeroize")]
-impl Zeroize for Hc256 {
+#[cfg(feature = "zeroize")]
+impl Zeroize for Hc256Core {
     fn zeroize(&mut self) {
         self.ptable.zeroize();
         self.qtable.zeroize();
-        self.word.zeroize();
         self.idx.zeroize();
-        self.offset.zeroize();
     }
 }
 
-#[cfg(cargo_feature = "zeroize")]
-impl Drop for Hc256 {
+#[cfg(feature = "zeroize")]
+impl core::ops::Drop for Hc256Core {
     fn drop(&mut self) {
         self.zeroize();
     }
-}
-
-#[inline]
-fn f1(x: u32) -> u32 {
-    x.rotate_right(7) ^ x.rotate_right(18) ^ (x >> 3)
-}
-
-#[inline]
-fn f2(x: u32) -> u32 {
-    x.rotate_right(17) ^ x.rotate_right(19) ^ (x >> 10)
 }
