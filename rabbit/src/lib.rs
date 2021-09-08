@@ -218,7 +218,6 @@ impl core::ops::Drop for State {
     }
 }
 
-
 /// Core state of the Rabbit stream cipher initialized only with key.
 #[derive(Clone)]
 pub struct RabbitKeyOnlyCore {
