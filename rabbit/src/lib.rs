@@ -49,8 +49,6 @@ pub type Rabbit = StreamCipherCoreWrapper<RabbitCore>;
 
 /// RFC 4503. 2.2.  Inner State (page 2).
 #[derive(Clone)]
-#[cfg_attr(feature = "zeroize", derive(Zeroize))]
-#[cfg_attr(feature = "zeroize", zeroize(drop))]
 struct State {
     /// State variables
     x: [u32; 8],
@@ -203,6 +201,23 @@ impl State {
         self.extract()
     }
 }
+
+#[cfg(feature = "zeroize")]
+impl Zeroize for State {
+    fn zeroize(&mut self) {
+        self.x.zeroize();
+        self.c.zeroize();
+        self.carry_bit.zeroize();
+    }
+}
+
+#[cfg(feature = "zeroize")]
+impl core::ops::Drop for State {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
 
 /// Core state of the Rabbit stream cipher initialized only with key.
 #[derive(Clone)]
