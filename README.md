@@ -19,9 +19,9 @@ received any formal cryptographic and security reviews/audits.
 | Name     | Crate name | Crates.io | Docs | MSRV |
 |----------|------------|-----------|------|------|
 | [ChaCha] | [`chacha20`] | [![crates.io](https://img.shields.io/crates/v/chacha20.svg)](https://crates.io/crates/chacha20) | [![Documentation](https://docs.rs/chacha20/badge.svg)](https://docs.rs/chacha20) | ![MSRV 1.51][msrv-1.51] |
-| [HC-256] | [`hc-256`]   | [![crates.io](https://img.shields.io/crates/v/hc-256.svg)](https://crates.io/crates/hc-256) | [![Documentation](https://docs.rs/hc-256/badge.svg)](https://docs.rs/hc-256) | ![MSRV 1.49][msrv-1.49] |
-| [Rabbit] | [`rabbit`]  | [![crates.io](https://img.shields.io/crates/v/rabbit.svg)](https://crates.io/crates/rabbit) | [![Documentation](https://docs.rs/rabbit/badge.svg)](https://docs.rs/rabbit) | ![MSRV 1.49][msrv-1.49] |
-| [Salsa20] | [`salsa20`]  | [![crates.io](https://img.shields.io/crates/v/salsa20.svg)](https://crates.io/crates/salsa20) | [![Documentation](https://docs.rs/salsa20/badge.svg)](https://docs.rs/salsa20) | ![MSRV 1.49][msrv-1.49] |
+| [HC-256] | [`hc-256`]   | [![crates.io](https://img.shields.io/crates/v/hc-256.svg)](https://crates.io/crates/hc-256) | [![Documentation](https://docs.rs/hc-256/badge.svg)](https://docs.rs/hc-256) | ![MSRV 1.51][msrv-1.51] |
+| [Rabbit] | [`rabbit`]  | [![crates.io](https://img.shields.io/crates/v/rabbit.svg)](https://crates.io/crates/rabbit) | [![Documentation](https://docs.rs/rabbit/badge.svg)](https://docs.rs/rabbit) | ![MSRV 1.51][msrv-1.51] |
+| [Salsa20] | [`salsa20`]  | [![crates.io](https://img.shields.io/crates/v/salsa20.svg)](https://crates.io/crates/salsa20) | [![Documentation](https://docs.rs/salsa20/badge.svg)](https://docs.rs/salsa20) | ![MSRV 1.51][msrv-1.51] |
 
 ### Minimum Supported Rust Version (MSRV) Policy
 
@@ -88,7 +88,6 @@ Unless you explicitly state otherwise, any contribution intentionally submitted 
 [license-image]: https://img.shields.io/badge/license-Apache2.0/MIT-blue.svg
 [hazmat-image]: https://img.shields.io/badge/crypto-hazmat%E2%9A%A0-red.svg
 [hazmat-link]: https://github.com/RustCrypto/meta/blob/master/HAZMAT.md
-[msrv-1.49]: https://img.shields.io/badge/rustc-1.49.0+-blue.svg
 [msrv-1.51]: https://img.shields.io/badge/rustc-1.51.0+-blue.svg
 
 [//]: # (footnotes)
