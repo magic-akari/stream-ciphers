@@ -1,6 +1,6 @@
 # RustCrypto: stream ciphers
 
-[![Project Chat][chat-image]][chat-link] [![dependency status][deps-image]][deps-link] [![HAZMAT][hazmat-image]][hazmat-link]
+[![Project Chat][chat-image]][chat-link] [![dependency status][deps-image]][deps-link] ![Apache2/MIT licensed][license-image] [![HAZMAT][hazmat-image]][hazmat-link]
 
 Collection of [stream ciphers] written in pure Rust.
 
@@ -85,6 +85,7 @@ Unless you explicitly state otherwise, any contribution intentionally submitted 
 [chat-link]: https://rustcrypto.zulipchat.com/#narrow/stream/260049-stream-ciphers
 [deps-image]: https://deps.rs/repo/github/RustCrypto/stream-ciphers/status.svg
 [deps-link]: https://deps.rs/repo/github/RustCrypto/stream-ciphers
+[license-image]: https://img.shields.io/badge/license-Apache2.0/MIT-blue.svg
 [hazmat-image]: https://img.shields.io/badge/crypto-hazmat%E2%9A%A0-red.svg
 [hazmat-link]: https://github.com/RustCrypto/meta/blob/master/HAZMAT.md
 [msrv-1.49]: https://img.shields.io/badge/rustc-1.49.0+-blue.svg
