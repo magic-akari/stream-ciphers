@@ -60,7 +60,7 @@
 pub use cipher;
 
 use cipher::{
-    consts::{U1, U12, U20, U24, U32, U64, U8},
+    consts::{U1, U10, U24, U32, U4, U6, U64, U8},
     generic_array::{typenum::Unsigned, GenericArray},
     Block, BlockSizeUser, IvSizeUser, KeyIvInit, KeySizeUser, ParBlocksSizeUser, StreamBackend,
     StreamCipherCore, StreamCipherCoreWrapper, StreamCipherSeekCore, StreamClosure,
@@ -73,15 +73,15 @@ pub use xsalsa::{hsalsa20, XSalsa20, XSalsa20Core};
 
 /// Salsa20/8 stream cipher
 /// (reduced-round variant of Salsa20 with 8 rounds, *not recommended*)
-pub type Salsa8 = StreamCipherCoreWrapper<Salsa20Core<U8>>;
+pub type Salsa8 = StreamCipherCoreWrapper<Salsa20Core<U4>>;
 
 /// Salsa20/12 stream cipher
 /// (reduced-round variant of Salsa20 with 12 rounds, *not recommended*)
-pub type Salsa12 = StreamCipherCoreWrapper<Salsa20Core<U12>>;
+pub type Salsa12 = StreamCipherCoreWrapper<Salsa20Core<U6>>;
 
 /// Salsa20/20 stream cipher
 /// (20 rounds; **recommended**)
-pub type Salsa20 = StreamCipherCoreWrapper<Salsa20Core<U20>>;
+pub type Salsa20 = StreamCipherCoreWrapper<Salsa20Core<U10>>;
 
 /// Key type used by all Salsa variants and [`XSalsa20`].
 pub type Key = GenericArray<u8, U32>;
@@ -217,9 +217,8 @@ pub(crate) fn quarter_round(
 #[inline(always)]
 fn run_rounds<R: Unsigned>(state: &[u32; STATE_WORDS]) -> [u32; STATE_WORDS] {
     let mut res = *state;
-    assert_eq!(R::USIZE % 2, 0);
 
-    for _ in 0..(R::USIZE / 2) {
+    for _ in 0..R::USIZE {
         // column rounds
         quarter_round(0, 4, 8, 12, &mut res);
         quarter_round(5, 9, 13, 1, &mut res);

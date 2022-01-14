@@ -1,8 +1,8 @@
 //! XSalsa20 is an extended nonce variant of Salsa20
 
-use super::{quarter_round, Backend, Key, Nonce, Salsa20Core, XNonce, CONSTANTS};
+use super::{quarter_round, Key, Nonce, Salsa20Core, XNonce, CONSTANTS};
 use cipher::{
-    consts::{U16, U20, U24, U32, U64},
+    consts::{U10, U16, U24, U32, U64},
     generic_array::GenericArray,
     BlockSizeUser, IvSizeUser, KeyIvInit, KeySizeUser, StreamCipherCore, StreamCipherCoreWrapper,
     StreamCipherSeekCore, StreamClosure,
@@ -20,7 +20,7 @@ use core::convert::TryInto;
 pub type XSalsa20 = StreamCipherCoreWrapper<XSalsa20Core>;
 
 /// The XSalsa20 core function.
-pub struct XSalsa20Core(Salsa20Core<U20>);
+pub struct XSalsa20Core(Salsa20Core<U10>);
 
 impl KeySizeUser for XSalsa20Core {
     type KeySize = U32;
@@ -35,6 +35,7 @@ impl BlockSizeUser for XSalsa20Core {
 }
 
 impl KeyIvInit for XSalsa20Core {
+    #[inline]
     fn new(key: &Key, iv: &XNonce) -> Self {
         let subkey = hsalsa20(key, iv[..16].as_ref().into());
         let mut padded_iv = Nonce::default();
@@ -49,8 +50,9 @@ impl StreamCipherCore for XSalsa20Core {
         self.0.remaining_blocks()
     }
 
+    #[inline(always)]
     fn process_with_backend(&mut self, f: impl StreamClosure<BlockSize = Self::BlockSize>) {
-        f.call(&mut Backend(&mut self.0));
+        self.0.process_with_backend(f);
     }
 }
 
@@ -81,24 +83,28 @@ impl StreamCipherSeekCore for XSalsa20Core {
 /// It produces 256-bits of output suitable for use as a Salsa20 key
 #[cfg_attr(docsrs, doc(cfg(feature = "hsalsa20")))]
 pub fn hsalsa20(key: &Key, input: &GenericArray<u8, U16>) -> GenericArray<u8, U32> {
+    #[inline(always)]
+    fn to_u32(chunk: &[u8]) -> u32 {
+        u32::from_le_bytes(chunk.try_into().unwrap())
+    }
+
     let mut state = [0u32; 16];
-
     state[0] = CONSTANTS[0];
+    state[1..5]
+        .iter_mut()
+        .zip(key[0..16].chunks_exact(4))
+        .for_each(|(v, chunk)| *v = to_u32(chunk));
     state[5] = CONSTANTS[1];
+    state[6..10]
+        .iter_mut()
+        .zip(input.chunks_exact(4))
+        .for_each(|(v, chunk)| *v = to_u32(chunk));
     state[10] = CONSTANTS[2];
+    state[11..15]
+        .iter_mut()
+        .zip(key[16..].chunks_exact(4))
+        .for_each(|(v, chunk)| *v = to_u32(chunk));
     state[15] = CONSTANTS[3];
-
-    for (i, chunk) in key.chunks(4).take(4).enumerate() {
-        state[1 + i] = u32::from_le_bytes(chunk.try_into().unwrap());
-    }
-
-    for (i, chunk) in key.chunks(4).skip(4).enumerate() {
-        state[11 + i] = u32::from_le_bytes(chunk.try_into().unwrap());
-    }
-
-    for (i, chunk) in input.chunks(4).enumerate() {
-        state[6 + i] = u32::from_le_bytes(chunk.try_into().unwrap());
-    }
 
     // 20 rounds consisting of 10 column rounds and 10 diagonal rounds
     for _ in 0..10 {
@@ -118,7 +124,7 @@ pub fn hsalsa20(key: &Key, input: &GenericArray<u8, U16>) -> GenericArray<u8, U3
     let mut output = GenericArray::default();
     let key_idx: [usize; 8] = [0, 5, 10, 15, 6, 7, 8, 9];
 
-    for (i, chunk) in output.chunks_mut(4).enumerate() {
+    for (i, chunk) in output.chunks_exact_mut(4).enumerate() {
         chunk.copy_from_slice(&state[key_idx[i]].to_le_bytes());
     }
 
