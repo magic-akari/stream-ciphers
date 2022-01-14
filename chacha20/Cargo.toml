@@ -33,14 +33,11 @@ hex-literal = "0.3"
 
 [features]
 default = ["cipher"]
-expose-core = []
-force-soft = []
 hchacha = ["cipher"]
 legacy = ["cipher"]
 neon = []
 rng = ["rand_core"]
-std = ["cipher/std"]
 
 [package.metadata.docs.rs]
-features = ["legacy", "rng", "std"]
+all-features = true
 rustdoc-args = ["--cfg", "docsrs"]

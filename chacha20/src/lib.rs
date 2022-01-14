@@ -2,7 +2,7 @@
 //!
 //! ChaCha20 is a lightweight stream cipher which is amenable to fast,
 //! constant-time implementations in software. It improves upon the previous
-//! [Salsa20] stream cipher, providing increased per-round diffusion
+//! [ChaCha] stream cipher, providing increased per-round diffusion
 //! with no cost to performance.
 //!
 //! Cipher functionality is accessed using traits from re-exported
@@ -11,10 +11,13 @@
 //! This crate contains the following variants of the ChaCha20 core algorithm:
 //!
 //! - [`ChaCha20`]: standard IETF variant with 96-bit nonce
-//! - [`ChaCha20Legacy`]: (gated under the `legacy` feature) "djb" variant with 64-bit nonce
 //! - [`ChaCha8`] / [`ChaCha12`]: reduced round variants of ChaCha20
 //! - [`XChaCha20`]: 192-bit extended nonce variant
 //! - [`XChaCha8`] / [`XChaCha12`]: reduced round variants of XChaCha20
+//! - [`ChaCha20Legacy`]: "djb" variant with 64-bit nonce.
+//! **WARNING:** This implementation interanlly uses 32-bit counter,
+//! while the original implementation uses 64-bit coutner. In other words,
+//! it does not allow encryption of more than 256 GiB of data.
 //!
 //! # ⚠️ Security Warning: [Hazmat!]
 //!
@@ -45,7 +48,7 @@
 //! # #[cfg(feature = "cipher")]
 //! # {
 //! use chacha20::{ChaCha20, Key, Nonce};
-//! use chacha20::cipher::{NewCipher, StreamCipher, StreamCipherSeek};
+//! use chacha20::cipher::{KeyIvInit, StreamCipher, StreamCipherSeek};
 //!
 //! let mut data = [1, 2, 3, 4, 5, 6, 7];
 //!
@@ -67,7 +70,7 @@
 //! ```
 //!
 //! [RFC 8439]: https://tools.ietf.org/html/rfc8439
-//! [Salsa20]: https://docs.rs/salsa20
+//! [ChaCha]: https://docs.rs/salsa20
 //! [Hazmat!]: https://github.com/RustCrypto/meta/blob/master/HAZMAT.md
 
 #![no_std]
@@ -83,49 +86,174 @@
 )]
 #![warn(missing_docs, rust_2018_idioms, trivial_casts, unused_qualifications)]
 
-mod backend;
 #[cfg(feature = "cipher")]
-mod chacha;
-#[cfg(feature = "legacy")]
-mod legacy;
-mod max_blocks;
-#[cfg(feature = "rng")]
-mod rng;
-mod rounds;
-// #[cfg(feature = "cipher")]
-// mod xchacha;
-
-#[cfg(feature = "cipher")]
+#[cfg_attr(docsrs, doc(cfg(feature = "cipher")))]
 pub use cipher;
 
-#[cfg(feature = "cipher")]
-pub use crate::chacha::{ChaCha, ChaCha12, ChaCha20, ChaCha8, Key, Nonce};
-
-#[cfg(feature = "expose-core")]
-pub use crate::{
-    backend::Core,
-    rounds::{R12, R20, R8},
+use cipher::{
+    consts::{U1, U10, U12, U32, U4, U6, U64},
+    generic_array::{typenum::Unsigned, GenericArray},
+    Block, BlockSizeUser, IvSizeUser, KeyIvInit, KeySizeUser, ParBlocksSizeUser, StreamBackend,
+    StreamCipherCore, StreamCipherCoreWrapper, StreamCipherSeekCore, StreamClosure,
 };
+use core::{convert::TryInto, marker::PhantomData};
 
-#[cfg(feature = "hchacha")]
-pub use crate::xchacha::hchacha;
+mod legacy;
+mod xchacha;
 
-#[cfg(feature = "legacy")]
-pub use crate::legacy::{ChaCha20Legacy, LegacyNonce};
-
-#[cfg(feature = "rng")]
-pub use rng::{
-    ChaCha12Rng, ChaCha12RngCore, ChaCha20Rng, ChaCha20RngCore, ChaCha8Rng, ChaCha8RngCore,
-};
-
-/// Size of a ChaCha20 block in bytes
-pub const BLOCK_SIZE: usize = 64;
-
-/// Size of a ChaCha20 key in bytes
-pub const KEY_SIZE: usize = 32;
-
-/// Number of bytes in the core (non-extended) ChaCha20 IV
-const IV_SIZE: usize = 8;
+pub use legacy::{ChaCha20Legacy, ChaCha20LegacyCore, LegacyNonce};
+pub use xchacha::{hchacha, XChaCha12, XChaCha20, XChaCha8, XChaChaCore, XNonce};
 
 /// State initialization constant ("expand 32-byte k")
 const CONSTANTS: [u32; 4] = [0x6170_7865, 0x3320_646e, 0x7962_2d32, 0x6b20_6574];
+
+/// Number of 32-bit words in the ChaCha state
+const STATE_WORDS: usize = 16;
+
+/// Key type used by all ChaCha variants.
+pub type Key = GenericArray<u8, U32>;
+
+/// Nonce type used by ChaCha variants.
+pub type Nonce = GenericArray<u8, U12>;
+
+/// ChaCha8 stream cipher (reduced-round variant of [`ChaCha20`] with 8 rounds)
+pub type ChaCha8 = StreamCipherCoreWrapper<ChaChaCore<U4>>;
+
+/// ChaCha12 stream cipher (reduced-round variant of [`ChaCha20`] with 12 rounds)
+pub type ChaCha12 = StreamCipherCoreWrapper<ChaChaCore<U6>>;
+
+/// ChaCha20 stream cipher (RFC 8439 version with 96-bit nonce)
+pub type ChaCha20 = StreamCipherCoreWrapper<ChaChaCore<U10>>;
+
+/// The ChaCha core function.
+// TODO(tarcieri): zeroize support
+pub struct ChaChaCore<R: Unsigned> {
+    /// Internal state of the core function
+    state: [u32; STATE_WORDS],
+    /// Number of rounds to perform
+    rounds: PhantomData<R>,
+}
+
+impl<R: Unsigned> KeySizeUser for ChaChaCore<R> {
+    type KeySize = U32;
+}
+
+impl<R: Unsigned> IvSizeUser for ChaChaCore<R> {
+    type IvSize = U12;
+}
+
+impl<R: Unsigned> BlockSizeUser for ChaChaCore<R> {
+    type BlockSize = U64;
+}
+
+impl<R: Unsigned> KeyIvInit for ChaChaCore<R> {
+    #[inline]
+    fn new(key: &Key, iv: &Nonce) -> Self {
+        let mut state = [0u32; STATE_WORDS];
+        state[0..4].copy_from_slice(&CONSTANTS);
+        let key_chunks = key.chunks_exact(4);
+        for (val, chunk) in state[4..12].iter_mut().zip(key_chunks) {
+            *val = u32::from_le_bytes(chunk.try_into().unwrap());
+        }
+        let iv_chunks = iv.chunks_exact(4);
+        for (val, chunk) in state[13..16].iter_mut().zip(iv_chunks) {
+            *val = u32::from_le_bytes(chunk.try_into().unwrap());
+        }
+        Self {
+            state,
+            rounds: PhantomData,
+        }
+    }
+}
+
+impl<R: Unsigned> StreamCipherCore for ChaChaCore<R> {
+    #[inline(always)]
+    fn remaining_blocks(&self) -> Option<usize> {
+        let rem = u32::MAX - self.get_block_pos();
+        rem.try_into().ok()
+    }
+
+    fn process_with_backend(&mut self, f: impl StreamClosure<BlockSize = Self::BlockSize>) {
+        f.call(&mut Backend(self));
+    }
+}
+
+impl<R: Unsigned> StreamCipherSeekCore for ChaChaCore<R> {
+    type Counter = u32;
+
+    #[inline(always)]
+    fn get_block_pos(&self) -> u32 {
+        self.state[12]
+    }
+
+    #[inline(always)]
+    fn set_block_pos(&mut self, pos: u32) {
+        self.state[12] = pos;
+    }
+}
+
+struct Backend<'a, R: Unsigned>(&'a mut ChaChaCore<R>);
+
+impl<'a, R: Unsigned> BlockSizeUser for Backend<'a, R> {
+    type BlockSize = U64;
+}
+
+impl<'a, R: Unsigned> ParBlocksSizeUser for Backend<'a, R> {
+    type ParBlocksSize = U1;
+}
+
+impl<'a, R: Unsigned> StreamBackend for Backend<'a, R> {
+    #[inline(always)]
+    fn gen_ks_block(&mut self, block: &mut Block<Self>) {
+        let res = run_rounds::<R>(&mut self.0.state);
+        self.0.set_block_pos(self.0.get_block_pos().wrapping_add(1));
+
+        for (chunk, val) in block.chunks_exact_mut(4).zip(res.iter()) {
+            chunk.copy_from_slice(&val.to_le_bytes());
+        }
+    }
+}
+
+#[inline(always)]
+fn run_rounds<R: Unsigned>(state: &[u32; STATE_WORDS]) -> [u32; STATE_WORDS] {
+    let mut res = *state;
+
+    for _ in 0..R::USIZE {
+        // column rounds
+        quarter_round(0, 4, 8, 12, &mut res);
+        quarter_round(1, 5, 9, 13, &mut res);
+        quarter_round(2, 6, 10, 14, &mut res);
+        quarter_round(3, 7, 11, 15, &mut res);
+
+        // diagonal rounds
+        quarter_round(0, 5, 10, 15, &mut res);
+        quarter_round(1, 6, 11, 12, &mut res);
+        quarter_round(2, 7, 8, 13, &mut res);
+        quarter_round(3, 4, 9, 14, &mut res);
+    }
+
+    for (s1, s0) in res.iter_mut().zip(state.iter()) {
+        *s1 = s1.wrapping_add(*s0);
+    }
+    res
+}
+
+/// The ChaCha20 quarter round function
+#[inline]
+fn quarter_round(a: usize, b: usize, c: usize, d: usize, state: &mut [u32; STATE_WORDS]) {
+    state[a] = state[a].wrapping_add(state[b]);
+    state[d] ^= state[a];
+    state[d] = state[d].rotate_left(16);
+
+    state[c] = state[c].wrapping_add(state[d]);
+    state[b] ^= state[c];
+    state[b] = state[b].rotate_left(12);
+
+    state[a] = state[a].wrapping_add(state[b]);
+    state[d] ^= state[a];
+    state[d] = state[d].rotate_left(8);
+
+    state[c] = state[c].wrapping_add(state[d]);
+    state[b] ^= state[c];
+    state[b] = state[b].rotate_left(7);
+}

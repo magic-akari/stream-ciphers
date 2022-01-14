@@ -54,7 +54,7 @@
     html_root_url = "https://docs.rs/salsa20/0.9.0"
 )]
 #![cfg_attr(docsrs, feature(doc_cfg))]
-#![deny(unsafe_code)]
+#![forbid(unsafe_code)]
 #![warn(missing_docs, rust_2018_idioms, trivial_casts, unused_qualifications)]
 
 pub use cipher;
@@ -65,7 +65,7 @@ use cipher::{
     Block, BlockSizeUser, IvSizeUser, KeyIvInit, KeySizeUser, ParBlocksSizeUser, StreamBackend,
     StreamCipherCore, StreamCipherCoreWrapper, StreamCipherSeekCore, StreamClosure,
 };
-use core::{convert::TryInto, marker::PhantomData, mem};
+use core::{convert::TryInto, marker::PhantomData};
 
 mod xsalsa;
 
@@ -83,19 +83,13 @@ pub type Salsa12 = StreamCipherCoreWrapper<Salsa20Core<U12>>;
 /// (20 rounds; **recommended**)
 pub type Salsa20 = StreamCipherCoreWrapper<Salsa20Core<U20>>;
 
-/// Key type.
-///
-/// Implemented as an alias for [`GenericArray`].
-///
-/// (NOTE: all three round variants use the same key size)
+/// Key type used by all Salsa variants and [`XSalsa20`].
 pub type Key = GenericArray<u8, U32>;
 
-/// Nonce type.
-///
-/// Implemented as an alias for [`GenericArray`].
+/// Nonce type used by all Salsa variants.
 pub type Nonce = GenericArray<u8, U8>;
 
-/// EXtended Salsa20 nonce (192-bit/24-byte)
+/// Nonce type used by [`XSalsa20`].
 pub type XNonce = GenericArray<u8, U24>;
 
 /// Number of 32-bit words in the Salsa20 state
@@ -127,8 +121,7 @@ impl<R: Unsigned> BlockSizeUser for Salsa20Core<R> {
 
 impl<R: Unsigned> KeyIvInit for Salsa20Core<R> {
     fn new(key: &Key, iv: &Nonce) -> Self {
-        #[allow(unsafe_code)]
-        let mut state: [u32; STATE_WORDS] = unsafe { mem::zeroed() };
+        let mut state = [0u32; STATE_WORDS];
         state[0] = CONSTANTS[0];
 
         for (i, chunk) in key[..16].chunks(4).enumerate() {

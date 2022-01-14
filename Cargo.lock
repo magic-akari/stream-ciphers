@@ -30,7 +30,7 @@ dependencies = [
 [[package]]
 name = "cipher"
 version = "0.4.0"
-source = "git+https://github.com/RustCrypto/traits/?branch=cipher_v0.4#2b9e0e7f8e3112c1c559c4c75bd05bff8ae8f70a"
+source = "git+https://github.com/RustCrypto/traits/?branch=cipher_v0.4#4e6a3ef985957d29bd38a8fbdc4c95eadc9df33c"
 dependencies = [
  "blobby",
  "crypto-common",
@@ -49,7 +49,7 @@ dependencies = [
 [[package]]
 name = "crypto-common"
 version = "0.1.2"
-source = "git+https://github.com/RustCrypto/traits/?branch=cipher_v0.4#2b9e0e7f8e3112c1c559c4c75bd05bff8ae8f70a"
+source = "git+https://github.com/RustCrypto/traits/?branch=cipher_v0.4#4e6a3ef985957d29bd38a8fbdc4c95eadc9df33c"
 dependencies = [
  "generic-array",
 ]

@@ -37,9 +37,9 @@ impl BlockSizeUser for XSalsa20Core {
 impl KeyIvInit for XSalsa20Core {
     fn new(key: &Key, iv: &XNonce) -> Self {
         let subkey = hsalsa20(key, iv[..16].as_ref().into());
-        let mut padded_nonce = Nonce::default();
-        padded_nonce.copy_from_slice(&iv[16..]);
-        XSalsa20Core(Salsa20Core::new(&subkey, &padded_nonce))
+        let mut padded_iv = Nonce::default();
+        padded_iv.copy_from_slice(&iv[16..]);
+        XSalsa20Core(Salsa20Core::new(&subkey, &padded_iv))
     }
 }
 
