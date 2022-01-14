@@ -91,13 +91,14 @@
 pub use cipher;
 
 use cipher::{
-    consts::{U1, U10, U12, U32, U4, U6, U64},
+    consts::{U10, U12, U32, U4, U6, U64},
     generic_array::{typenum::Unsigned, GenericArray},
-    Block, BlockSizeUser, IvSizeUser, KeyIvInit, KeySizeUser, ParBlocksSizeUser, StreamBackend,
-    StreamCipherCore, StreamCipherCoreWrapper, StreamCipherSeekCore, StreamClosure,
+    BlockSizeUser, IvSizeUser, KeyIvInit, KeySizeUser, StreamCipherCore, StreamCipherCoreWrapper,
+    StreamCipherSeekCore, StreamClosure,
 };
 use core::{convert::TryInto, marker::PhantomData};
 
+mod backends;
 mod legacy;
 mod xchacha;
 
@@ -109,6 +110,9 @@ const CONSTANTS: [u32; 4] = [0x6170_7865, 0x3320_646e, 0x7962_2d32, 0x6b20_6574]
 
 /// Number of 32-bit words in the ChaCha state
 const STATE_WORDS: usize = 16;
+
+/// Block type used by all ChaCha variants.
+type Block = GenericArray<u8, U64>;
 
 /// Key type used by all ChaCha variants.
 pub type Key = GenericArray<u8, U32>;
@@ -174,7 +178,7 @@ impl<R: Unsigned> StreamCipherCore for ChaChaCore<R> {
     }
 
     fn process_with_backend(&mut self, f: impl StreamClosure<BlockSize = Self::BlockSize>) {
-        f.call(&mut Backend(self));
+        f.call(&mut backends::soft::Backend(self));
     }
 }
 
@@ -190,70 +194,4 @@ impl<R: Unsigned> StreamCipherSeekCore for ChaChaCore<R> {
     fn set_block_pos(&mut self, pos: u32) {
         self.state[12] = pos;
     }
-}
-
-struct Backend<'a, R: Unsigned>(&'a mut ChaChaCore<R>);
-
-impl<'a, R: Unsigned> BlockSizeUser for Backend<'a, R> {
-    type BlockSize = U64;
-}
-
-impl<'a, R: Unsigned> ParBlocksSizeUser for Backend<'a, R> {
-    type ParBlocksSize = U1;
-}
-
-impl<'a, R: Unsigned> StreamBackend for Backend<'a, R> {
-    #[inline(always)]
-    fn gen_ks_block(&mut self, block: &mut Block<Self>) {
-        let res = run_rounds::<R>(&mut self.0.state);
-        self.0.set_block_pos(self.0.get_block_pos().wrapping_add(1));
-
-        for (chunk, val) in block.chunks_exact_mut(4).zip(res.iter()) {
-            chunk.copy_from_slice(&val.to_le_bytes());
-        }
-    }
-}
-
-#[inline(always)]
-fn run_rounds<R: Unsigned>(state: &[u32; STATE_WORDS]) -> [u32; STATE_WORDS] {
-    let mut res = *state;
-
-    for _ in 0..R::USIZE {
-        // column rounds
-        quarter_round(0, 4, 8, 12, &mut res);
-        quarter_round(1, 5, 9, 13, &mut res);
-        quarter_round(2, 6, 10, 14, &mut res);
-        quarter_round(3, 7, 11, 15, &mut res);
-
-        // diagonal rounds
-        quarter_round(0, 5, 10, 15, &mut res);
-        quarter_round(1, 6, 11, 12, &mut res);
-        quarter_round(2, 7, 8, 13, &mut res);
-        quarter_round(3, 4, 9, 14, &mut res);
-    }
-
-    for (s1, s0) in res.iter_mut().zip(state.iter()) {
-        *s1 = s1.wrapping_add(*s0);
-    }
-    res
-}
-
-/// The ChaCha20 quarter round function
-#[inline]
-fn quarter_round(a: usize, b: usize, c: usize, d: usize, state: &mut [u32; STATE_WORDS]) {
-    state[a] = state[a].wrapping_add(state[b]);
-    state[d] ^= state[a];
-    state[d] = state[d].rotate_left(16);
-
-    state[c] = state[c].wrapping_add(state[d]);
-    state[b] ^= state[c];
-    state[b] = state[b].rotate_left(12);
-
-    state[a] = state[a].wrapping_add(state[b]);
-    state[d] ^= state[a];
-    state[d] = state[d].rotate_left(8);
-
-    state[c] = state[c].wrapping_add(state[d]);
-    state[b] ^= state[c];
-    state[b] = state[b].rotate_left(7);
 }

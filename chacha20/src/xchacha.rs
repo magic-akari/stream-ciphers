@@ -1,6 +1,6 @@
 //! XChaCha is an extended nonce variant of ChaCha
 
-use super::{quarter_round, ChaChaCore, Key, Nonce, CONSTANTS};
+use super::{backends::soft::quarter_round, ChaChaCore, Key, Nonce, CONSTANTS};
 use cipher::{
     consts::{U10, U16, U24, U32, U4, U6, U64},
     generic_array::{typenum::Unsigned, GenericArray},

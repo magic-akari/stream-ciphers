@@ -3,10 +3,10 @@
 //! Defined in RFC 8439 Section 2.3:
 //! <https://tools.ietf.org/html/rfc8439#section-2.3>
 
-use cfg_if::cfg_if;
+// use cfg_if::cfg_if;
 
 pub(crate) mod soft;
-
+/*
 cfg_if! {
     if #[cfg(all(
         any(target_arch = "x86", target_arch = "x86_64"),
@@ -33,3 +33,4 @@ cfg_if! {
         pub use self::soft::Core;
     }
 }
+*/
