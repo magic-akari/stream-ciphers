@@ -1,4 +1,6 @@
-# RustCrypto: stream ciphers [![Project Chat][chat-image]][chat-link] [![dependency status][deps-image]][deps-link] [![HAZMAT][hazmat-image]][hazmat-link]
+# RustCrypto: stream ciphers
+
+[![Project Chat][chat-image]][chat-link] [![dependency status][deps-image]][deps-link] [![HAZMAT][hazmat-image]][hazmat-link]
 
 Collection of [stream ciphers] written in pure Rust.
 
