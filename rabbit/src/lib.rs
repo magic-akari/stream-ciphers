@@ -14,12 +14,11 @@
 pub use cipher;
 
 use cipher::{
-    consts::{U16, U8},
-    crypto_common::{Block, BlockUser, InnerUser, IvUser, KeyUser},
-    inout::InOutBuf,
-    InnerIvInit, KeyInit, StreamCipherCore, StreamCipherCoreWrapper,
+    consts::{U1, U16, U8},
+    crypto_common::InnerUser,
+    Block, BlockSizeUser, InnerIvInit, IvSizeUser, KeyInit, KeySizeUser, ParBlocksSizeUser,
+    StreamBackend, StreamCipherCore, StreamCipherCoreWrapper, StreamClosure,
 };
-use core::slice::from_ref;
 #[cfg(feature = "zeroize")]
 use zeroize::Zeroize;
 
@@ -41,6 +40,8 @@ pub type Key = cipher::Key<RabbitCore>;
 
 /// Rabbit Stream Cipher Initialization Vector.
 pub type Iv = cipher::Iv<RabbitCore>;
+
+type BlockSize = U16;
 
 /// The Rabbit stream cipher initializied only with key.
 pub type RabbitKeyOnly = StreamCipherCoreWrapper<RabbitKeyOnlyCore>;
@@ -224,7 +225,7 @@ pub struct RabbitKeyOnlyCore {
     state: State,
 }
 
-impl KeyUser for RabbitKeyOnlyCore {
+impl KeySizeUser for RabbitKeyOnlyCore {
     type KeySize = U16;
 }
 
@@ -236,11 +237,12 @@ impl KeyInit for RabbitKeyOnlyCore {
     }
 }
 
-impl BlockUser for RabbitKeyOnlyCore {
-    type BlockSize = U16;
+impl BlockSizeUser for RabbitKeyOnlyCore {
+    type BlockSize = BlockSize;
 }
 
 impl StreamCipherCore for RabbitKeyOnlyCore {
+    #[inline(always)]
     fn remaining_blocks(&self) -> Option<usize> {
         // Rabbit can generate 2^64 blocks, but since it does not implement
         // the seeking traits, we can assume that so many blocks never will
@@ -248,17 +250,8 @@ impl StreamCipherCore for RabbitKeyOnlyCore {
         None
     }
 
-    fn apply_keystream_blocks(
-        &mut self,
-        blocks: InOutBuf<'_, Block<Self>>,
-        mut pre_fn: impl FnMut(&[Block<Self>]),
-        mut post_fn: impl FnMut(&[Block<Self>]),
-    ) {
-        for mut block in blocks {
-            pre_fn(from_ref(block.reborrow().get_in()));
-            block.reborrow().into_buf().xor(&self.state.next_block());
-            post_fn(from_ref(block.reborrow().get_out()));
-        }
+    fn process_with_backend(&mut self, f: impl StreamClosure<BlockSize = Self::BlockSize>) {
+        f.call(&mut Backend(&mut self.state));
     }
 }
 
@@ -272,7 +265,7 @@ impl InnerUser for RabbitCore {
     type Inner = RabbitKeyOnlyCore;
 }
 
-impl IvUser for RabbitCore {
+impl IvSizeUser for RabbitCore {
     type IvSize = U8;
 }
 
@@ -284,11 +277,12 @@ impl InnerIvInit for RabbitCore {
     }
 }
 
-impl BlockUser for RabbitCore {
-    type BlockSize = U16;
+impl BlockSizeUser for RabbitCore {
+    type BlockSize = BlockSize;
 }
 
 impl StreamCipherCore for RabbitCore {
+    #[inline(always)]
     fn remaining_blocks(&self) -> Option<usize> {
         // Rabbit can generate 2^64 blocks, but since it does not implement
         // the seeking traits, we can assume that so many blocks never will
@@ -296,16 +290,24 @@ impl StreamCipherCore for RabbitCore {
         None
     }
 
-    fn apply_keystream_blocks(
-        &mut self,
-        blocks: InOutBuf<'_, Block<Self>>,
-        mut pre_fn: impl FnMut(&[Block<Self>]),
-        mut post_fn: impl FnMut(&[Block<Self>]),
-    ) {
-        for mut block in blocks {
-            pre_fn(from_ref(block.reborrow().get_in()));
-            block.reborrow().into_buf().xor(&self.state.next_block());
-            post_fn(from_ref(block.reborrow().get_out()));
-        }
+    fn process_with_backend(&mut self, f: impl StreamClosure<BlockSize = Self::BlockSize>) {
+        f.call(&mut Backend(&mut self.state));
+    }
+}
+
+struct Backend<'a>(&'a mut State);
+
+impl<'a> BlockSizeUser for Backend<'a> {
+    type BlockSize = BlockSize;
+}
+
+impl<'a> ParBlocksSizeUser for Backend<'a> {
+    type ParBlocksSize = U1;
+}
+
+impl<'a> StreamBackend for Backend<'a> {
+    #[inline(always)]
+    fn gen_ks_block(&mut self, block: &mut Block<Self>) {
+        block.copy_from_slice(&self.0.next_block());
     }
 }

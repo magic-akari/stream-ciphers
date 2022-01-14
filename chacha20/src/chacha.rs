@@ -12,8 +12,7 @@ use crate::{
 };
 use cipher::{
     consts::{U12, U32},
-    errors::{LoopError, OverflowError},
-    NewCipher, SeekNum, StreamCipher, StreamCipherSeek,
+    KeyIvInit, SeekNum, StreamCipher, StreamCipherSeek,
 };
 use core::{
     convert::TryInto,
@@ -38,12 +37,12 @@ pub type ChaCha20 = ChaCha<R20, C32>;
 /// Implemented as an alias for [`GenericArray`].
 ///
 /// (NOTE: all variants of [`ChaCha20`] including `XChaCha20` use the same key type)
-pub type Key = cipher::CipherKey<ChaCha20>;
+pub type Key = cipher::Key<ChaCha20>;
 
 /// Nonce type (96-bits/12-bytes)
 ///
 /// Implemented as an alias for [`GenericArray`].
-pub type Nonce = cipher::Nonce<ChaCha20>;
+pub type Nonce = cipher::Iv<ChaCha20>;
 
 /// Internal buffer
 type Buffer = [u8; BUFFER_SIZE];
@@ -60,7 +59,7 @@ const COUNTER_INCR: u64 = (BUFFER_SIZE as u64) / (BLOCK_SIZE as u64);
 /// a specific number of rounds.
 ///
 /// Generally [`ChaCha20`] is preferred.
-pub struct ChaCha<R: Rounds, MC: MaxCounter> {
+pub struct ChaChaCore<R: Rounds, MC: MaxCounter> {
     _max_blocks: PhantomData<MC>,
 
     /// ChaCha20 core function initialized with a key and IV

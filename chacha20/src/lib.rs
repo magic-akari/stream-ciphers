@@ -92,17 +92,14 @@ mod max_blocks;
 #[cfg(feature = "rng")]
 mod rng;
 mod rounds;
-#[cfg(feature = "cipher")]
-mod xchacha;
+// #[cfg(feature = "cipher")]
+// mod xchacha;
 
 #[cfg(feature = "cipher")]
 pub use cipher;
 
 #[cfg(feature = "cipher")]
-pub use crate::{
-    chacha::{ChaCha, ChaCha12, ChaCha20, ChaCha8, Key, Nonce},
-    xchacha::{XChaCha, XChaCha12, XChaCha20, XChaCha8, XNonce},
-};
+pub use crate::chacha::{ChaCha, ChaCha12, ChaCha20, ChaCha8, Key, Nonce};
 
 #[cfg(feature = "expose-core")]
 pub use crate::{

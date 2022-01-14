@@ -12,12 +12,11 @@
 pub use cipher;
 
 use cipher::{
-    consts::{U32, U4},
-    inout::InOutBuf,
-    Block, BlockUser, Iv, IvUser, Key, KeyIvInit, KeyUser, StreamCipherCore,
-    StreamCipherCoreWrapper,
+    consts::{U1, U32, U4},
+    AlgorithmName, Block, BlockSizeUser, Iv, IvSizeUser, Key, KeyIvInit, KeySizeUser,
+    ParBlocksSizeUser, StreamBackend, StreamCipherCore, StreamCipherCoreWrapper, StreamClosure,
 };
-use core::slice::from_ref;
+use core::fmt;
 
 #[cfg(feature = "zeroize")]
 use zeroize::Zeroize;
@@ -40,15 +39,15 @@ pub struct Hc256Core {
     idx: u32,
 }
 
-impl BlockUser for Hc256Core {
+impl BlockSizeUser for Hc256Core {
     type BlockSize = U4;
 }
 
-impl KeyUser for Hc256Core {
+impl KeySizeUser for Hc256Core {
     type KeySize = U32;
 }
 
-impl IvUser for Hc256Core {
+impl IvSizeUser for Hc256Core {
     type IvSize = U32;
 }
 
@@ -105,24 +104,25 @@ impl KeyIvInit for Hc256Core {
 }
 
 impl StreamCipherCore for Hc256Core {
+    #[inline(always)]
     fn remaining_blocks(&self) -> Option<usize> {
         None
     }
 
-    fn apply_keystream_blocks(
-        &mut self,
-        blocks: InOutBuf<'_, Block<Self>>,
-        mut pre_fn: impl FnMut(&[Block<Self>]),
-        mut post_fn: impl FnMut(&[Block<Self>]),
-    ) {
-        for mut block in blocks {
-            pre_fn(from_ref(block.reborrow().get_in()));
-            block
-                .reborrow()
-                .into_buf()
-                .xor(&self.gen_word().to_le_bytes());
-            post_fn(from_ref(block.reborrow().get_out()));
-        }
+    fn process_with_backend(&mut self, f: impl StreamClosure<BlockSize = Self::BlockSize>) {
+        f.call(&mut Backend(self));
+    }
+}
+
+impl AlgorithmName for Hc256Core {
+    fn write_alg_name(f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Hc256")
+    }
+}
+
+impl fmt::Debug for Hc256Core {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Hc256Core { ... }")
     }
 }
 
@@ -196,5 +196,22 @@ impl Zeroize for Hc256Core {
 impl core::ops::Drop for Hc256Core {
     fn drop(&mut self) {
         self.zeroize();
+    }
+}
+
+struct Backend<'a>(&'a mut Hc256Core);
+
+impl<'a> BlockSizeUser for Backend<'a> {
+    type BlockSize = <Hc256Core as BlockSizeUser>::BlockSize;
+}
+
+impl<'a> ParBlocksSizeUser for Backend<'a> {
+    type ParBlocksSize = U1;
+}
+
+impl<'a> StreamBackend for Backend<'a> {
+    #[inline(always)]
+    fn gen_ks_block(&mut self, block: &mut Block<Self>) {
+        block.copy_from_slice(&self.0.gen_word().to_le_bytes());
     }
 }

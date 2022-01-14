@@ -1,6 +1,6 @@
 //! Salsa20 tests
 
-use cipher::{generic_array::GenericArray, NewCipher, StreamCipher, StreamCipherSeek};
+use cipher::{generic_array::GenericArray, KeyIvInit, StreamCipher, StreamCipherSeek};
 use salsa20::Salsa20;
 use salsa20::XSalsa20;
 

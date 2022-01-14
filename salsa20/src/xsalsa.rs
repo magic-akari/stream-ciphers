@@ -1,16 +1,13 @@
 //! XSalsa20 is an extended nonce variant of Salsa20
 
-use crate::{core::quarter_round, Key, Nonce, Salsa20, CONSTANTS};
+use super::{quarter_round, Backend, Key, Nonce, Salsa20Core, XNonce, CONSTANTS};
 use cipher::{
-    consts::{U16, U24, U32},
-    errors::{LoopError, OverflowError},
+    consts::{U16, U20, U24, U32, U64},
     generic_array::GenericArray,
-    NewCipher, SeekNum, StreamCipher, StreamCipherSeek,
+    BlockSizeUser, IvSizeUser, KeyIvInit, KeySizeUser, StreamCipherCore, StreamCipherCoreWrapper,
+    StreamCipherSeekCore, StreamClosure,
 };
 use core::convert::TryInto;
-
-/// EXtended Salsa20 nonce (192-bit/24-byte)
-pub type XNonce = cipher::Nonce<XSalsa20>;
 
 /// XSalsa20 is a Salsa20 variant with an extended 192-bit (24-byte) nonce.
 ///
@@ -20,46 +17,54 @@ pub type XNonce = cipher::Nonce<XSalsa20>;
 ///
 /// The `xsalsa20` Cargo feature must be enabled in order to use this
 /// (which it is by default).
-pub struct XSalsa20(Salsa20);
+pub type XSalsa20 = StreamCipherCoreWrapper<XSalsa20Core>;
 
-impl NewCipher for XSalsa20 {
-    /// Key size in bytes
+/// The XSalsa20 core function.
+pub struct XSalsa20Core(Salsa20Core<U20>);
+
+impl KeySizeUser for XSalsa20Core {
     type KeySize = U32;
+}
 
-    /// Nonce size in bytes
-    type NonceSize = U24;
+impl IvSizeUser for XSalsa20Core {
+    type IvSize = U24;
+}
 
-    #[allow(unused_mut, clippy::let_and_return)]
-    fn new(key: &Key, nonce: &XNonce) -> Self {
-        let mut subkey = hsalsa20(key, nonce[..16].as_ref().into());
+impl BlockSizeUser for XSalsa20Core {
+    type BlockSize = U64;
+}
+
+impl KeyIvInit for XSalsa20Core {
+    fn new(key: &Key, iv: &XNonce) -> Self {
+        let subkey = hsalsa20(key, iv[..16].as_ref().into());
         let mut padded_nonce = Nonce::default();
-        padded_nonce.copy_from_slice(&nonce[16..]);
-
-        let mut result = XSalsa20(Salsa20::new(&subkey, &padded_nonce));
-
-        #[cfg(feature = "zeroize")]
-        {
-            use zeroize::Zeroize;
-            subkey.as_mut_slice().zeroize();
-        }
-
-        result
+        padded_nonce.copy_from_slice(&iv[16..]);
+        XSalsa20Core(Salsa20Core::new(&subkey, &padded_nonce))
     }
 }
 
-impl StreamCipher for XSalsa20 {
-    fn try_apply_keystream(&mut self, data: &mut [u8]) -> Result<(), LoopError> {
-        self.0.try_apply_keystream(data)
+impl StreamCipherCore for XSalsa20Core {
+    #[inline(always)]
+    fn remaining_blocks(&self) -> Option<usize> {
+        self.0.remaining_blocks()
+    }
+
+    fn process_with_backend(&mut self, f: impl StreamClosure<BlockSize = Self::BlockSize>) {
+        f.call(&mut Backend(&mut self.0));
     }
 }
 
-impl StreamCipherSeek for XSalsa20 {
-    fn try_current_pos<T: SeekNum>(&self) -> Result<T, OverflowError> {
-        self.0.try_current_pos()
+impl StreamCipherSeekCore for XSalsa20Core {
+    type Counter = u64;
+
+    #[inline(always)]
+    fn get_block_pos(&self) -> u64 {
+        self.0.get_block_pos()
     }
 
-    fn try_seek<T: SeekNum>(&mut self, pos: T) -> Result<(), LoopError> {
-        self.0.try_seek(pos)
+    #[inline(always)]
+    fn set_block_pos(&mut self, pos: u64) {
+        self.0.set_block_pos(pos);
     }
 }
 

@@ -27,7 +27,7 @@
 //!
 //! ```
 //! use salsa20::{Salsa20, Key, Nonce};
-//! use salsa20::cipher::{NewCipher, StreamCipher, StreamCipherSeek};
+//! use salsa20::cipher::{KeyIvInit, StreamCipher, StreamCipherSeek};
 //!
 //! let mut data = [1, 2, 3, 4, 5, 6, 7];
 //!
@@ -59,33 +59,198 @@
 
 pub use cipher;
 
-mod core;
-mod rounds;
-mod salsa;
+use cipher::{
+    consts::{U1, U12, U20, U24, U32, U64, U8},
+    generic_array::{typenum::Unsigned, GenericArray},
+    Block, BlockSizeUser, IvSizeUser, KeyIvInit, KeySizeUser, ParBlocksSizeUser, StreamBackend,
+    StreamCipherCore, StreamCipherCoreWrapper, StreamCipherSeekCore, StreamClosure,
+};
+use core::{convert::TryInto, marker::PhantomData, mem};
+
 mod xsalsa;
 
-pub use crate::{
-    salsa::{Key, Nonce, Salsa, Salsa12, Salsa20, Salsa8},
-    xsalsa::{XNonce, XSalsa20},
-};
+pub use xsalsa::{hsalsa20, XSalsa20, XSalsa20Core};
 
-#[cfg(feature = "expose-core")]
-pub use crate::{
-    core::Core,
-    rounds::{R12, R20, R8},
-};
+/// Salsa20/8 stream cipher
+/// (reduced-round variant of Salsa20 with 8 rounds, *not recommended*)
+pub type Salsa8 = StreamCipherCoreWrapper<Salsa20Core<U8>>;
 
-#[cfg(feature = "hsalsa20")]
-pub use crate::xsalsa::hsalsa20;
+/// Salsa20/12 stream cipher
+/// (reduced-round variant of Salsa20 with 12 rounds, *not recommended*)
+pub type Salsa12 = StreamCipherCoreWrapper<Salsa20Core<U12>>;
 
-/// Size of a Salsa20 block in bytes
-pub const BLOCK_SIZE: usize = 64;
+/// Salsa20/20 stream cipher
+/// (20 rounds; **recommended**)
+pub type Salsa20 = StreamCipherCoreWrapper<Salsa20Core<U20>>;
 
-/// Size of a Salsa20 key in bytes
-pub const KEY_SIZE: usize = 32;
+/// Key type.
+///
+/// Implemented as an alias for [`GenericArray`].
+///
+/// (NOTE: all three round variants use the same key size)
+pub type Key = GenericArray<u8, U32>;
+
+/// Nonce type.
+///
+/// Implemented as an alias for [`GenericArray`].
+pub type Nonce = GenericArray<u8, U8>;
+
+/// EXtended Salsa20 nonce (192-bit/24-byte)
+pub type XNonce = GenericArray<u8, U24>;
 
 /// Number of 32-bit words in the Salsa20 state
 const STATE_WORDS: usize = 16;
 
 /// State initialization constant ("expand 32-byte k")
 const CONSTANTS: [u32; 4] = [0x6170_7865, 0x3320_646e, 0x7962_2d32, 0x6b20_6574];
+
+/// The Salsa20 core function.
+// TODO(tarcieri): zeroize support
+pub struct Salsa20Core<R: Unsigned> {
+    /// Internal state of the core function
+    state: [u32; STATE_WORDS],
+    /// Number of rounds to perform
+    rounds: PhantomData<R>,
+}
+
+impl<R: Unsigned> KeySizeUser for Salsa20Core<R> {
+    type KeySize = U32;
+}
+
+impl<R: Unsigned> IvSizeUser for Salsa20Core<R> {
+    type IvSize = U8;
+}
+
+impl<R: Unsigned> BlockSizeUser for Salsa20Core<R> {
+    type BlockSize = U64;
+}
+
+impl<R: Unsigned> KeyIvInit for Salsa20Core<R> {
+    fn new(key: &Key, iv: &Nonce) -> Self {
+        #[allow(unsafe_code)]
+        let mut state: [u32; STATE_WORDS] = unsafe { mem::zeroed() };
+        state[0] = CONSTANTS[0];
+
+        for (i, chunk) in key[..16].chunks(4).enumerate() {
+            state[1 + i] = u32::from_le_bytes(chunk.try_into().unwrap());
+        }
+
+        state[5] = CONSTANTS[1];
+
+        for (i, chunk) in iv.chunks(4).enumerate() {
+            state[6 + i] = u32::from_le_bytes(chunk.try_into().unwrap());
+        }
+
+        state[8] = 0;
+        state[9] = 0;
+        state[10] = CONSTANTS[2];
+
+        for (i, chunk) in key[16..].chunks(4).enumerate() {
+            state[11 + i] = u32::from_le_bytes(chunk.try_into().unwrap());
+        }
+
+        state[15] = CONSTANTS[3];
+
+        Self {
+            state,
+            rounds: PhantomData,
+        }
+    }
+}
+
+impl<R: Unsigned> StreamCipherCore for Salsa20Core<R> {
+    #[inline(always)]
+    fn remaining_blocks(&self) -> Option<usize> {
+        let rem = u64::MAX - self.get_block_pos();
+        rem.try_into().ok()
+    }
+    fn process_with_backend(&mut self, f: impl StreamClosure<BlockSize = Self::BlockSize>) {
+        f.call(&mut Backend(self));
+    }
+}
+
+impl<R: Unsigned> StreamCipherSeekCore for Salsa20Core<R> {
+    type Counter = u64;
+
+    #[inline(always)]
+    fn get_block_pos(&self) -> u64 {
+        (self.state[8] as u64) + ((self.state[9] as u64) << 32)
+    }
+
+    #[inline(always)]
+    fn set_block_pos(&mut self, pos: u64) {
+        self.state[8] = (pos & 0xffff_ffff) as u32;
+        self.state[9] = ((pos >> 32) & 0xffff_ffff) as u32;
+    }
+}
+
+struct Backend<'a, R: Unsigned>(&'a mut Salsa20Core<R>);
+
+impl<'a, R: Unsigned> BlockSizeUser for Backend<'a, R> {
+    type BlockSize = U64;
+}
+
+impl<'a, R: Unsigned> ParBlocksSizeUser for Backend<'a, R> {
+    type ParBlocksSize = U1;
+}
+
+impl<'a, R: Unsigned> StreamBackend for Backend<'a, R> {
+    #[inline(always)]
+    fn gen_ks_block(&mut self, block: &mut Block<Self>) {
+        let res = run_rounds::<R>(&mut self.0.state);
+        self.0.set_block_pos(self.0.get_block_pos() + 1);
+
+        for (chunk, val) in block.chunks_exact_mut(4).zip(res.iter()) {
+            chunk.copy_from_slice(&val.to_le_bytes());
+        }
+    }
+}
+
+#[inline]
+#[allow(clippy::many_single_char_names)]
+pub(crate) fn quarter_round(
+    a: usize,
+    b: usize,
+    c: usize,
+    d: usize,
+    state: &mut [u32; STATE_WORDS],
+) {
+    let mut t: u32;
+
+    t = state[a].wrapping_add(state[d]);
+    state[b] ^= t.rotate_left(7) as u32;
+
+    t = state[b].wrapping_add(state[a]);
+    state[c] ^= t.rotate_left(9) as u32;
+
+    t = state[c].wrapping_add(state[b]);
+    state[d] ^= t.rotate_left(13) as u32;
+
+    t = state[d].wrapping_add(state[c]);
+    state[a] ^= t.rotate_left(18) as u32;
+}
+
+#[inline(always)]
+fn run_rounds<R: Unsigned>(state: &[u32; STATE_WORDS]) -> [u32; STATE_WORDS] {
+    let mut res = *state;
+    assert_eq!(R::USIZE % 2, 0);
+
+    for _ in 0..(R::USIZE / 2) {
+        // column rounds
+        quarter_round(0, 4, 8, 12, &mut res);
+        quarter_round(5, 9, 13, 1, &mut res);
+        quarter_round(10, 14, 2, 6, &mut res);
+        quarter_round(15, 3, 7, 11, &mut res);
+
+        // diagonal rounds
+        quarter_round(0, 1, 2, 3, &mut res);
+        quarter_round(5, 6, 7, 4, &mut res);
+        quarter_round(10, 11, 8, 9, &mut res);
+        quarter_round(15, 12, 13, 14, &mut res);
+    }
+
+    for (s1, s0) in res.iter_mut().zip(state.iter()) {
+        *s1 = s1.wrapping_add(*s0);
+    }
+    res
+}

@@ -7,6 +7,5 @@ members = [
 ]
 
 [patch.crates-io]
-cipher = { git = "https://github.com/RustCrypto/traits/", branch = "new_traits" }
-block-buffer = { git = "https://github.com/RustCrypto/utils", branch = "pad_error" }
-inout = { git = "https://github.com/RustCrypto/utils", branch = "pad_error" }
+cipher = { git = "https://github.com/RustCrypto/traits/", branch = "cipher_v0.4" }
+inout = { git = "https://github.com/RustCrypto/utils", branch = "add_inout" }
