@@ -190,7 +190,7 @@ impl<'a, R: Unsigned> ParBlocksSizeUser for Backend<'a, R> {
 impl<'a, R: Unsigned> StreamBackend for Backend<'a, R> {
     #[inline(always)]
     fn gen_ks_block(&mut self, block: &mut Block<Self>) {
-        let res = run_rounds::<R>(&mut self.0.state);
+        let res = run_rounds::<R>(&self.0.state);
         self.0.set_block_pos(self.0.get_block_pos() + 1);
 
         for (chunk, val) in block.chunks_exact_mut(4).zip(res.iter()) {
@@ -208,19 +208,10 @@ pub(crate) fn quarter_round(
     d: usize,
     state: &mut [u32; STATE_WORDS],
 ) {
-    let mut t: u32;
-
-    t = state[a].wrapping_add(state[d]);
-    state[b] ^= t.rotate_left(7) as u32;
-
-    t = state[b].wrapping_add(state[a]);
-    state[c] ^= t.rotate_left(9) as u32;
-
-    t = state[c].wrapping_add(state[b]);
-    state[d] ^= t.rotate_left(13) as u32;
-
-    t = state[d].wrapping_add(state[c]);
-    state[a] ^= t.rotate_left(18) as u32;
+    state[b] ^= state[a].wrapping_add(state[d]).rotate_left(7);
+    state[c] ^= state[b].wrapping_add(state[a]).rotate_left(9);
+    state[d] ^= state[c].wrapping_add(state[b]).rotate_left(13);
+    state[a] ^= state[d].wrapping_add(state[c]).rotate_left(18);
 }
 
 #[inline(always)]

@@ -20,7 +20,7 @@ impl<'a, R: Unsigned> ParBlocksSizeUser for Backend<'a, R> {
 impl<'a, R: Unsigned> StreamBackend for Backend<'a, R> {
     #[inline(always)]
     fn gen_ks_block(&mut self, block: &mut Block) {
-        let res = run_rounds::<R>(&mut self.0.state);
+        let res = run_rounds::<R>(&self.0.state);
         self.0.state[12] = self.0.state[12].wrapping_add(1);
 
         for (chunk, val) in block.chunks_exact_mut(4).zip(res.iter()) {
